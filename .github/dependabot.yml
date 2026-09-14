@@ -1,0 +1,32 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      lint-and-test-tooling:
+        patterns:
+          - 'eslint'
+          - '@eslint/*'
+          - 'typescript-eslint'
+          - 'eslint-config-prettier'
+          - 'prettier'
+          - 'vitest'
+          - '@vitest/*'
+          - '@types/*'
+    ignore:
+      # typescript-eslint does not support TypeScript 7 (the native compiler) yet.
+      - dependency-name: typescript
+        versions: ['>=6.1.0']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly

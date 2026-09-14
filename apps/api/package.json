@@ -1,0 +1,13 @@
+{
+  "name": "@campusbridge/api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CampusBridge REST API and background worker.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "4.6.5"
+  }
+}

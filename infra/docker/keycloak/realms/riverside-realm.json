@@ -1,0 +1,56 @@
+{
+  "realm": "riverside",
+  "displayName": "Riverside University (demo IdP)",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "clients": [
+    {
+      "clientId": "campusbridge",
+      "name": "CampusBridge",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "riverside-dev-client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:5173/api/v1/auth/oidc/callback",
+        "http://localhost:4000/api/v1/auth/oidc/callback"
+      ],
+      "webOrigins": ["+"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:5173/*"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "sso.professor@riverside.test",
+      "email": "sso.professor@riverside.test",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Sam",
+      "lastName": "Rivera",
+      "credentials": [{ "type": "password", "value": "Password123!", "temporary": false }]
+    },
+    {
+      "username": "sso.student@riverside.test",
+      "email": "sso.student@riverside.test",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Alex",
+      "lastName": "Chen",
+      "credentials": [{ "type": "password", "value": "Password123!", "temporary": false }]
+    }
+  ]
+}

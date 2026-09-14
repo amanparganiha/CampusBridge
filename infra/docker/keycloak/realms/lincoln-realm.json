@@ -1,0 +1,65 @@
+{
+  "realm": "lincoln",
+  "displayName": "Lincoln High School (demo IdP)",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": false,
+  "editUsernameAllowed": false,
+  "bruteForceProtected": true,
+  "clients": [
+    {
+      "clientId": "campusbridge",
+      "name": "CampusBridge",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "lincoln-dev-client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:5173/api/v1/auth/oidc/callback",
+        "http://localhost:4000/api/v1/auth/oidc/callback"
+      ],
+      "webOrigins": ["+"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:5173/*"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "sso.teacher@lincoln.test",
+      "email": "sso.teacher@lincoln.test",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Maya",
+      "lastName": "Patel",
+      "credentials": [{ "type": "password", "value": "Password123!", "temporary": false }]
+    },
+    {
+      "username": "sso.student@lincoln.test",
+      "email": "sso.student@lincoln.test",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Jordan",
+      "lastName": "Lee",
+      "credentials": [{ "type": "password", "value": "Password123!", "temporary": false }]
+    },
+    {
+      "username": "visitor@elsewhere.test",
+      "email": "visitor@elsewhere.test",
+      "emailVerified": true,
+      "enabled": true,
+      "firstName": "Visiting",
+      "lastName": "Outsider",
+      "credentials": [{ "type": "password", "value": "Password123!", "temporary": false }]
+    }
+  ]
+}

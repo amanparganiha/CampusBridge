@@ -1,0 +1,130 @@
+# Local development infrastructure for CampusBridge.
+#   npm run infra:up     # start everything and wait until healthy
+#   npm run infra:reset  # stop and delete all data volumes
+# Host ports come from .env (see .env.example) so they can be moved if they clash.
+
+name: campusbridge
+
+x-healthcheck: &healthcheck
+  interval: 5s
+  timeout: 5s
+  retries: 30
+  start_period: 5s
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      # Local superuser that owns the schema. The app connects as the least-privileged
+      # cb_app / cb_system roles created by the bootstrap script (npm run db:setup).
+      POSTGRES_USER: campusbridge
+      POSTGRES_PASSWORD: campusbridge
+      POSTGRES_DB: campusbridge
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - log_min_duration_statement=500
+    ports:
+      - '${POSTGRES_PORT:-5433}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      <<: *healthcheck
+      test: ['CMD-SHELL', 'pg_isready -U campusbridge -d campusbridge']
+
+  redis:
+    image: redis:7.4-alpine
+    # BullMQ requires noeviction: evicting queue keys would silently lose jobs.
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      <<: *healthcheck
+      test: ['CMD', 'redis-cli', 'ping']
+
+  mailpit:
+    # Catches all outgoing email; web UI on :8025.
+    image: axllent/mailpit:v1.31.1
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 'true'
+      MP_SMTP_AUTH_ALLOW_INSECURE: 'true'
+      MP_MAX_MESSAGES: '5000'
+    ports:
+      - '${MAILPIT_UI_PORT:-8025}:8025'
+      - '${MAILPIT_SMTP_PORT:-1025}:1025'
+    healthcheck:
+      <<: *healthcheck
+      test: ['CMD', '/mailpit', 'readyz']
+
+  minio:
+    # S3-compatible object storage. Docker Hub no longer publishes MinIO images; quay.io does.
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ['server', '/data', '--console-address', ':9001']
+    environment:
+      MINIO_ROOT_USER: campusbridge
+      MINIO_ROOT_PASSWORD: campusbridge-dev-secret
+      MINIO_API_CORS_ALLOW_ORIGIN: 'http://localhost:5173'
+    ports:
+      - '${MINIO_API_PORT:-9000}:9000'
+      - '${MINIO_CONSOLE_PORT:-9001}:9001'
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      <<: *healthcheck
+      test: ['CMD', 'mc', 'ready', 'local']
+
+  minio-init:
+    # One-shot bucket setup. Kept out of `up` (whose --wait treats any exit as failure);
+    # `npm run infra:up` runs it with `docker compose run --rm minio-init`.
+    image: quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z
+    profiles: ['init']
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ['/bin/sh', '-c']
+    command:
+      - >-
+        mc alias set local http://minio:9000 campusbridge campusbridge-dev-secret &&
+        mc mb --ignore-existing local/campusbridge-files &&
+        mc anonymous set none local/campusbridge-files
+
+  keycloak:
+    # Institutional SSO for local demos. Realms mirror the seeded tenants.
+    image: quay.io/keycloak/keycloak:26.7.3
+    command: ['start-dev', '--import-realm']
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      # The issuer (and browser-facing endpoints) use localhost, which works for the browser
+      # and for the API running on the host. Backchannel endpoints (token, JWKS) follow the
+      # request host, so a containerised API can still reach Keycloak at keycloak:8080.
+      # (host.docker.internal was rejected: Docker Desktop's hosts entry goes stale on DHCP.)
+      KC_HOSTNAME: 'http://localhost:${KEYCLOAK_PORT:-8080}'
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: 'true'
+      KC_HTTP_PORT: '8080'
+      KC_HEALTH_ENABLED: 'true'
+    ports:
+      - '${KEYCLOAK_PORT:-8080}:8080'
+    volumes:
+      - ./infra/docker/keycloak/realms:/opt/keycloak/data/import:ro
+    healthcheck:
+      <<: *healthcheck
+      retries: 60
+      start_period: 20s
+      # The image ships without curl; talk HTTP to the management port directly.
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 &&
+          grep -q '"UP"' <&3
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:

@@ -1,0 +1,12 @@
+# Normalize to LF everywhere so shell scripts and SQL mounted into Linux containers
+# keep working when the repo is checked out on Windows.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
