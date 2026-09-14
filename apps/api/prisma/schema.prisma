@@ -1,0 +1,44 @@
+// CampusBridge data model.
+//
+// Conventions
+// - Primary keys are UUIDv7 (time-ordered, so B-tree inserts stay local and ids double as
+//   stable keyset-pagination cursors).
+// - Tables and columns are snake_case in Postgres (@@map / @map); fields are camelCase in code.
+// - Timestamps are timestamptz with millisecond precision.
+// - Tenant-owned tables carry tenant_id, composite (tenant_id, id) foreign keys and row-level
+//   security policies. Privileges, RLS and CHECK constraints live in the migration SQL.
+
+generator client {
+  provider               = "prisma-client"
+  output                 = "../src/generated/prisma"
+  runtime                = "nodejs"
+  moduleFormat           = "esm"
+  generatedFileExtension = "ts"
+  importFileExtension    = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum TenantStatus {
+  active
+  suspended
+
+  @@map("tenant_status")
+}
+
+/// A school or institution. The root of every tenant-owned record.
+model Tenant {
+  id        String       @id @default(uuid(7)) @db.Uuid
+  /// URL-safe identifier used at login and in SSO URLs (e.g. "lincoln").
+  slug      String       @unique
+  name      String
+  status    TenantStatus @default(active)
+  /// Branding and feature flags, validated by the API (see modules/tenants).
+  settings  Json         @default("{}")
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("tenants")
+}

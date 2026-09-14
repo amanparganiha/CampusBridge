@@ -20,6 +20,14 @@ updates:
       # typescript-eslint does not support TypeScript 7 (the native compiler) yet.
       - dependency-name: typescript
         versions: ['>=6.1.0']
+      # Node type definitions must match the runtime major (.nvmrc / Docker base image).
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
+      # Prisma majors change the client, config and migration engine; upgrade deliberately.
+      - dependency-name: 'prisma'
+        update-types: ['version-update:semver-major']
+      - dependency-name: '@prisma/*'
+        update-types: ['version-update:semver-major']
 
   - package-ecosystem: github-actions
     directory: /
@@ -30,3 +38,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # Local majors mirror the managed services in AWS (RDS PostgreSQL 17, ElastiCache Redis 7).
+      # Bump them together with the Terraform engine versions, not independently.
+      - dependency-name: 'postgres'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'redis'
+        update-types: ['version-update:semver-major']

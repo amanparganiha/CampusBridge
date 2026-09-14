@@ -24,23 +24,40 @@ Requirements: Node 24, Docker Desktop.
 
 ```bash
 cp .env.example .env
-npm install
-npm run infra:up      # Postgres, Redis, Mailpit, MinIO, Keycloak
+npm install            # also generates the Prisma client
+npm run infra:up       # Postgres, Redis, Mailpit, MinIO, Keycloak
+npm run db:setup       # migrations (as schema owner) + least-privilege login roles
+npm run dev            # API on http://localhost:4000, docs at /docs
 npm test
 ```
 
-| Service       | URL                                    |
-| ------------- | -------------------------------------- |
-| Postgres      | `localhost:5433` (user `campusbridge`) |
-| Redis         | `localhost:6379`                       |
-| Mailpit (UI)  | http://localhost:8025                  |
-| MinIO console | http://localhost:9001                  |
-| Keycloak      | http://localhost:8080 (admin / admin)  |
+| Service       | URL                                                   |
+| ------------- | ----------------------------------------------------- |
+| API           | http://localhost:4000 (OpenAPI UI at `/docs`)         |
+| Health        | `/health/live`, `/health/ready`                       |
+| Metrics       | `/metrics` (Bearer `METRICS_TOKEN`)                   |
+| Postgres      | `localhost:5433` (owner `campusbridge`, app `cb_app`) |
+| Redis         | `localhost:6379`                                      |
+| Mailpit (UI)  | http://localhost:8025                                 |
+| MinIO console | http://localhost:9001                                 |
+| Keycloak      | http://localhost:8080 (admin / admin)                 |
+
+## Conventions at a glance
+
+- **Errors** are RFC 9457 `application/problem+json` with a stable machine-readable `code` and
+  the `requestId` for log correlation. Unexpected errors never leak internal messages.
+- **Pagination** is cursor-based (`limit`, opaque `cursor`), returning `{ data, pageInfo }`.
+- **Database access** uses least-privilege roles: migrations run as the schema owner, the API
+  connects as `cb_app` (DML only). Role passwords are set as SCRAM verifiers, so plaintext never
+  reaches Postgres logs or `pg_stat_statements`.
 
 ## Repository layout
 
 ```
-apps/api            Fastify API and background worker
+apps/api            Fastify API (and, later, the background worker)
+  prisma/           schema and SQL migrations (roles, grants, constraints)
+  scripts/          operator CLIs (db-bootstrap)
+  src/              app factory, plugins, modules
 infra/docker        Local infrastructure config (Postgres init, Keycloak realms)
 .github/workflows   CI
 ```

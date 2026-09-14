@@ -40,6 +40,8 @@ export default defineConfig(
         { allowNumber: true, allowBoolean: true },
       ],
       '@typescript-eslint/no-floating-promises': 'error',
+      // Fastify route plugins are `async (app) => { app.get(...) }` by convention, with no await.
+      '@typescript-eslint/require-await': 'off',
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
       eqeqeq: ['error', 'always'],
       'no-console': 'error',
@@ -56,6 +58,14 @@ export default defineConfig(
     files: ['**/test/**/*.ts'],
     rules: {
       '@typescript-eslint/no-non-null-assertion': 'off',
+    },
+  },
+
+  {
+    // Operator CLIs report progress on stdout/stderr.
+    files: ['apps/*/scripts/**/*.ts'],
+    rules: {
+      'no-console': 'off',
     },
   },
 

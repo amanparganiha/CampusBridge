@@ -31,6 +31,11 @@ export const envSchema = z
     TRUST_PROXY: z.stringbool().default(false),
     /** Extra browser origins allowed via CORS. The admin app is same-origin and needs none. */
     CORS_ORIGINS: commaSeparated.default([]),
+    /**
+     * On SIGTERM, report "not ready" for this long before closing, so the load balancer stops
+     * sending new requests first. Set to a few seconds behind an ALB; 0 locally.
+     */
+    SHUTDOWN_DRAIN_MS: z.coerce.number().int().min(0).max(60_000).default(0),
 
     /** Runtime role (`cb_app`): DML only, subject to row-level security. */
     DATABASE_URL: postgresUrl,
