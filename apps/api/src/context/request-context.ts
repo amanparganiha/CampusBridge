@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
+import type { Principal } from '../auth/principal.js';
 
 /**
  * Per-request (or per-job) context carried implicitly through async calls.
@@ -15,6 +16,8 @@ export interface RequestContext {
   readonly userAgent?: string | undefined;
   /** Set once the tenant is known; every tenant-scoped query is bound to it. */
   tenantId?: string | undefined;
+  /** Set by authentication; read by audit logging and authorization. */
+  principal?: Principal | undefined;
 }
 
 const storage = new AsyncLocalStorage<RequestContext>();

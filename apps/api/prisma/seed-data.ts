@@ -33,6 +33,8 @@ export interface SeedTenant {
     branding: { displayName: string; primaryColor: string };
     features: Record<string, boolean>;
   };
+  /** Single sign-on through the matching realm of the local Keycloak (docker compose). */
+  sso: { realm: string; clientSecret: string; allowedEmailDomains: string[] };
   admin: { email: string; name: string };
   instructors: { email: string; name: string }[];
   students: { email: string; name: string }[];
@@ -46,6 +48,11 @@ export const SEED_TENANTS: SeedTenant[] = [
     settings: {
       branding: { displayName: 'Lincoln High', primaryColor: '#1d4ed8' },
       features: { selfEnrollment: true, payments: true, ai: true },
+    },
+    sso: {
+      realm: 'lincoln',
+      clientSecret: 'lincoln-dev-client-secret',
+      allowedEmailDomains: ['lincoln.test'],
     },
     admin: { email: 'admin@lincoln.test', name: 'Lincoln Administrator' },
     instructors: [
@@ -157,6 +164,11 @@ export const SEED_TENANTS: SeedTenant[] = [
     settings: {
       branding: { displayName: 'Riverside University', primaryColor: '#047857' },
       features: { selfEnrollment: true, payments: true, ai: false },
+    },
+    sso: {
+      realm: 'riverside',
+      clientSecret: 'riverside-dev-client-secret',
+      allowedEmailDomains: ['riverside.test'],
     },
     admin: { email: 'admin@riverside.test', name: 'Riverside Administrator' },
     instructors: [

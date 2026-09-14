@@ -22,6 +22,7 @@ export const TENANT_SCOPED_TABLES = {
   audit_logs: 'AuditLog',
   outbox_events: 'OutboxEvent',
   idempotency_keys: 'IdempotencyKey',
+  integrations: 'Integration',
 } as const satisfies Record<string, Prisma.ModelName>;
 
 export const TENANT_SCOPED_MODELS: ReadonlySet<string> = new Set(

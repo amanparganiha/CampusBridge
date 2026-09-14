@@ -1,7 +1,14 @@
 import type { PrismaClient } from '../src/generated/prisma/client.js';
+import type { Encryptor } from '../src/lib/crypto/encryption.js';
 import { hashPassword } from '../src/lib/password.js';
+import { integrationSecretsContext } from '../src/modules/auth/oidc/oidc.config.js';
 import { provisionTenant } from '../src/modules/tenants/provisioning.js';
 import { DEMO_PASSWORD, SEED_TENANTS, type SeedTenant } from './seed-data.js';
+
+export interface SeedOptions {
+  /** When given, each school also gets SSO against its Keycloak realm. */
+  sso?: { encryptor: Encryptor; keycloakUrl: string };
+}
 
 /** Creates one demo school and all of its people, courses, sections, enrollments and grades. */
 async function seedTenant(db: PrismaClient, seed: SeedTenant, passwordHash: string): Promise<void> {
@@ -87,12 +94,43 @@ async function seedTenant(db: PrismaClient, seed: SeedTenant, passwordHash: stri
   });
 }
 
+/** Adds SSO against the school's Keycloak realm unless the school already has SSO configured. */
+async function ensureDemoSso(
+  db: PrismaClient,
+  tenantId: string,
+  seed: SeedTenant,
+  options: SeedOptions,
+): Promise<void> {
+  if (!options.sso) return;
+  await db.integration.upsert({
+    where: { tenantId_provider: { tenantId, provider: 'oidc' } },
+    update: {},
+    create: {
+      tenantId,
+      provider: 'oidc',
+      config: {
+        issuer: new URL(`/realms/${seed.sso.realm}`, options.sso.keycloakUrl).href,
+        clientId: 'campusbridge',
+        allowedEmailDomains: seed.sso.allowedEmailDomains,
+        jitProvisioning: true,
+        defaultRoleKey: 'student',
+        displayName: `Sign in with ${seed.name} SSO`,
+      },
+      credentialsEnc: options.sso.encryptor.encryptJson(
+        { clientSecret: seed.sso.clientSecret },
+        integrationSecretsContext(tenantId, 'oidc'),
+      ),
+    },
+  });
+}
+
 /**
- * Seeds every demo school that does not exist yet. Runs as the schema owner, like provisioning.
- * Returns what happened per school, for the CLI to print.
+ * Seeds every demo school that does not exist yet, and makes sure each has demo SSO. Runs as
+ * the schema owner, like provisioning. Returns what happened per school, for the CLI to print.
  */
 export async function seedDemoTenants(
   db: PrismaClient,
+  options: SeedOptions = {},
   tenants: readonly SeedTenant[] = SEED_TENANTS,
 ): Promise<{ slug: string; created: boolean }[]> {
   const passwordHash = await hashPassword(DEMO_PASSWORD);
@@ -100,6 +138,8 @@ export async function seedDemoTenants(
   for (const seed of tenants) {
     const existing = await db.tenant.findUnique({ where: { slug: seed.slug } });
     if (!existing) await seedTenant(db, seed, passwordHash);
+    const tenant = existing ?? (await db.tenant.findUniqueOrThrow({ where: { slug: seed.slug } }));
+    await ensureDemoSso(db, tenant.id, seed, options);
     outcomes.push({ slug: seed.slug, created: !existing });
   }
   return outcomes;

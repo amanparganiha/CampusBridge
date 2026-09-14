@@ -17,7 +17,7 @@ function loadEnv(): Env {
 }
 
 const env = loadEnv();
-const container = createContainer(env);
+const container = await createContainer(env);
 const app = await buildApp(container);
 
 // SIGTERM (ECS task stop, Ctrl+C locally): stop reporting ready, let the load balancer drain,

@@ -26,10 +26,19 @@ const swaggerPluginImpl: FastifyPluginAsync<SwaggerPluginOptions> = async (app, 
           '(`application/problem+json`) with a stable `code`; list endpoints use cursor pagination.',
       },
       servers: [{ url: env.PUBLIC_API_URL }],
-      tags: [{ name: 'health', description: 'Liveness and readiness probes' }],
+      tags: [
+        { name: 'health', description: 'Liveness and readiness probes' },
+        { name: 'auth', description: 'Sign-in, sessions, single sign-on and token keys' },
+        { name: 'api-keys', description: 'Credentials for partner systems' },
+      ],
       components: {
         securitySchemes: {
-          bearerAuth: { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+          bearerAuth: {
+            type: 'http',
+            scheme: 'bearer',
+            description:
+              'An access token from /api/v1/auth/login (a short-lived JWT), or a partner API key (cbk_...).',
+          },
         },
       },
     },

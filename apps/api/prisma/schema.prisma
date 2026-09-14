@@ -66,6 +66,7 @@ model Tenant {
   auditLogs       AuditLog[]
   outboxEvents    OutboxEvent[]
   idempotencyKeys IdempotencyKey[]
+  integrations    Integration[]
 
   @@map("tenants")
 }
@@ -100,8 +101,9 @@ model User {
   /// argon2id hash; null for SSO-only accounts.
   passwordHash     String?    @map("password_hash")
   status           UserStatus @default(active)
+  /// Failed password attempts since the last successful login (informational for admins;
+  /// throttling itself lives in Redis so it cannot reveal which accounts exist).
   failedLoginCount Int        @default(0) @map("failed_login_count")
-  lockedUntil      DateTime?  @map("locked_until") @db.Timestamptz(3)
   lastLoginAt      DateTime?  @map("last_login_at") @db.Timestamptz(3)
   createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt        DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
@@ -419,6 +421,48 @@ model Grade {
   @@unique([tenantId, id])
   @@index([tenantId, enrollmentId])
   @@map("grades")
+}
+
+// ─── Integrations ────────────────────────────────────────────────────────────────────────────
+
+enum IntegrationProvider {
+  /// The school's own identity provider (institutional SSO).
+  oidc
+  canvas
+  moodle
+
+  @@map("integration_provider")
+}
+
+enum IntegrationStatus {
+  connected
+  disconnected
+  error
+
+  @@map("integration_status")
+}
+
+/// A school's connection to an external system. At most one per provider.
+model Integration {
+  id             String              @id @default(uuid(7)) @db.Uuid
+  tenantId       String              @map("tenant_id") @db.Uuid
+  provider       IntegrationProvider
+  status         IntegrationStatus   @default(connected)
+  /// Non-secret settings, validated per provider (e.g. OIDC issuer and client id).
+  config         Json                @default("{}")
+  /// Secrets (client secrets, API tokens) encrypted with AES-256-GCM, bound to this row.
+  credentialsEnc String?             @map("credentials_enc")
+  lastSyncAt     DateTime?           @map("last_sync_at") @db.Timestamptz(3)
+  lastError      String?             @map("last_error")
+  connectedById  String?             @map("connected_by_id") @db.Uuid
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, provider])
+  @@map("integrations")
 }
 
 // ─── Platform ────────────────────────────────────────────────────────────────────────────────

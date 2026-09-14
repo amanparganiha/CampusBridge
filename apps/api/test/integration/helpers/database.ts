@@ -5,6 +5,7 @@ import { inject } from 'vitest';
 import { createDatabase } from '../../../src/db/prisma.js';
 import { createTenantDb, type TenantDb } from '../../../src/db/tenant-db.js';
 import type { PrismaClient } from '../../../src/generated/prisma/client.js';
+import { hashPassword } from '../../../src/lib/password.js';
 import {
   provisionTenant,
   type ProvisionedTenant,
@@ -60,8 +61,41 @@ export function createTestTenant(owner: PrismaClient, label: string): Promise<Pr
   return provisionTenant(owner, {
     slug,
     name: `Test ${label}`,
-    admin: { email: `admin@${slug}.test`, name: `${label} admin`, password: 'test-password-1234' },
+    admin: { email: `admin@${slug}.test`, name: `${label} admin`, password: TEST_PASSWORD },
   });
+}
+
+export const TEST_PASSWORD = 'test-password-1234';
+
+/** A user with one system role at the tenant, created as the owner role. */
+export async function createTestUser(
+  owner: PrismaClient,
+  tenant: ProvisionedTenant,
+  options: {
+    role: 'admin' | 'instructor' | 'student';
+    email?: string;
+    status?: 'invited' | 'active' | 'suspended';
+    passwordHash?: string | null;
+  },
+) {
+  const email =
+    options.email ?? `${options.role}-${randomUUID().slice(0, 8)}@${tenant.tenant.slug}.test`;
+  const user = await owner.user.create({
+    data: {
+      tenantId: tenant.tenant.id,
+      email,
+      name: `${options.role} ${email.split('@')[0] ?? ''}`,
+      status: options.status ?? 'active',
+      passwordHash:
+        options.passwordHash === undefined
+          ? await hashPassword(TEST_PASSWORD)
+          : options.passwordHash,
+    },
+  });
+  await owner.userRole.create({
+    data: { tenantId: tenant.tenant.id, userId: user.id, roleId: tenant.roleIds[options.role] },
+  });
+  return user;
 }
 
 /** A course (with one section) owned by the tenant's admin, created as the owner role. */
@@ -143,6 +177,9 @@ export async function populateEveryTenantTable(
   });
   await owner.outboxEvent.create({
     data: { tenantId, type: 'test.happened', aggregateType: 'test', aggregateId: tag, payload: {} },
+  });
+  await owner.integration.create({
+    data: { tenantId, provider: 'canvas', config: { baseUrl: 'https://canvas.example.test' } },
   });
   await owner.idempotencyKey.create({
     data: {

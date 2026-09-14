@@ -73,6 +73,25 @@ The integration suite exercises each layer on its own (including RLS with the ex
 off), and schema-guard tests fail the build if a new table ships without its policies, with a
 global unique index, or with a single-column foreign key.
 
+## Authentication and access control
+
+- **Password sign-in** (`POST /api/v1/auth/login`) returns a 15-minute ES256 access token and
+  a refresh token. Browsers receive the refresh token as an HttpOnly, SameSite=Strict cookie,
+  one per school, so the admin app can hold sessions at several schools at once.
+- **Refresh tokens rotate** on every use. Replaying an already-used token revokes the whole
+  session (a copied token is assumed stolen). Logout is immediate, including for access tokens.
+- **Institutional SSO** (OpenID Connect with PKCE, state and nonce), configured per school.
+  Accounts are created on first login for allowed, verified email domains. Try it with the seed:
+  open `http://localhost:4000/api/v1/auth/oidc/lincoln/authorize` and sign in to Keycloak as
+  `sso.teacher@lincoln.test` / `Password123!`.
+- **RBAC plus ownership rules.** Permissions come from roles, and attribute-based rules narrow
+  them (instructors manage only their own courses, students see only courses they're enrolled in).
+- **Partner API keys** (`cbk_…`) carry a subset of their creator's permissions and never more.
+- **Secure by default.** Every `/api/v1` route requires credentials unless it explicitly opts
+  out. A test walks the OpenAPI document and fails if any route is public without review.
+- Password guessing is throttled per school and email, and responses never reveal whether an
+  account exists.
+
 ## Conventions at a glance
 
 - **Errors** are RFC 9457 `application/problem+json` with a stable machine-readable `code` and

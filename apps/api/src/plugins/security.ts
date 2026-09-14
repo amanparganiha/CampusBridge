@@ -45,16 +45,22 @@ const securityPluginImpl: FastifyPluginAsync<SecurityPluginOptions> = async (
 
   await app.register(rateLimit, {
     global: true,
-    max: 300,
+    max: env.RATE_LIMIT_PER_MINUTE,
     timeWindow: '1 minute',
-    // Runs after authentication (added in P3) so limits can be keyed per tenant and principal.
+    // Runs after authentication so limits are per caller, not per shared IP (a whole school
+    // behind one NAT would otherwise share a single budget).
     hook: 'preHandler',
     ...(redis ? { redis } : {}),
     nameSpace: 'cb:ratelimit:',
     // Availability over strictness: if Redis is unreachable, serve the request unthrottled.
     skipOnError: true,
     enableDraftSpec: true,
-    keyGenerator: (request) => request.ip,
+    keyGenerator: (request) => {
+      const { principal } = request;
+      if (principal?.kind === 'user') return `user:${principal.userId}`;
+      if (principal?.kind === 'api_key') return `apikey:${principal.apiKeyId}`;
+      return `ip:${request.ip}`;
+    },
     errorResponseBuilder: (_request, context) =>
       new TooManyRequestsError(`Rate limit exceeded. Retry in ${context.after}.`),
   });
