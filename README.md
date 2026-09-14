@@ -27,8 +27,20 @@ cp .env.example .env
 npm install            # also generates the Prisma client
 npm run infra:up       # Postgres, Redis, Mailpit, MinIO, Keycloak
 npm run db:setup       # migrations (as schema owner) + least-privilege login roles
+npm run db:seed        # two demo schools: Lincoln High School and Riverside University
 npm run dev            # API on http://localhost:4000, docs at /docs
-npm test
+npm test               # unit + integration tests (integration tests need Docker)
+```
+
+Demo accounts (password `Password123!`): `admin@lincoln.test`, `maya.patel@lincoln.test`
+(instructor), `jordan.lee@lincoln.test` (student), `admin@riverside.test`,
+`sam.rivera@riverside.test` (instructor), `alex.chen@riverside.test` (student).
+
+Provision another school (an operator action, deliberately not an API endpoint):
+
+```bash
+npm run tenant:create -- --slug hillcrest --name "Hillcrest Academy" \
+  --admin-email admin@hillcrest.test --admin-name "Hillcrest Admin"
 ```
 
 | Service       | URL                                                   |
@@ -42,22 +54,42 @@ npm test
 | MinIO console | http://localhost:9001                                 |
 | Keycloak      | http://localhost:8080 (admin / admin)                 |
 
+## Tenant isolation
+
+Every school's data lives in shared tables, and three independent layers keep it apart:
+
+1. **Schema.** Every tenant-owned table carries `tenant_id`; relations are composite
+   `(tenant_id, …)` foreign keys, so a row cannot reference another school's row, even when
+   written by a privileged role. Every unique constraint includes `tenant_id`, so uniqueness
+   checks never reveal what exists at another school.
+2. **Application.** Feature code only gets `TenantDb`, a Prisma client extension that injects the
+   current tenant into every filter and every new row, rejects mismatched tenant ids, and fails
+   closed when no tenant is in context.
+3. **Database.** PostgreSQL row-level security on every tenant-owned table. The API connects as a
+   role without `BYPASSRLS`, and each transaction is bound to one tenant, so even raw SQL or a
+   forgotten filter cannot cross schools.
+
+The integration suite exercises each layer on its own (including RLS with the extension switched
+off), and schema-guard tests fail the build if a new table ships without its policies, with a
+global unique index, or with a single-column foreign key.
+
 ## Conventions at a glance
 
 - **Errors** are RFC 9457 `application/problem+json` with a stable machine-readable `code` and
   the `requestId` for log correlation. Unexpected errors never leak internal messages.
 - **Pagination** is cursor-based (`limit`, opaque `cursor`), returning `{ data, pageInfo }`.
 - **Database access** uses least-privilege roles: migrations run as the schema owner, the API
-  connects as `cb_app` (DML only). Role passwords are set as SCRAM verifiers, so plaintext never
-  reaches Postgres logs or `pg_stat_statements`.
+  connects as `cb_app` (DML only, RLS enforced). Role passwords are set as SCRAM verifiers, so
+  plaintext never reaches Postgres logs or `pg_stat_statements`.
 
 ## Repository layout
 
 ```
 apps/api            Fastify API (and, later, the background worker)
-  prisma/           schema and SQL migrations (roles, grants, constraints)
-  scripts/          operator CLIs (db-bootstrap)
-  src/              app factory, plugins, modules
+  prisma/           schema, SQL migrations (RLS, roles, grants, constraints), seed
+  scripts/          operator CLIs (db-bootstrap, create-tenant)
+  src/              app factory, plugins, modules; src/db holds the tenant isolation layer
+  test/             unit tests and Testcontainers-backed integration tests
 infra/docker        Local infrastructure config (Postgres init, Keycloak realms)
-.github/workflows   CI
+.github/workflows   CI (quality, integration, migrations)
 ```

@@ -62,10 +62,41 @@ export default defineConfig(
   },
 
   {
-    // Operator CLIs report progress on stdout/stderr.
-    files: ['apps/*/scripts/**/*.ts'],
+    // Operator CLIs and the seed report progress on stdout/stderr.
+    files: ['apps/*/scripts/**/*.ts', 'apps/*/prisma/**/*.ts'],
     rules: {
       'no-console': 'off',
+    },
+  },
+
+  {
+    // Tenant isolation boundary. Application code reaches the database only through TenantDb
+    // (tenant-scoped, RLS-enforced). The cross-tenant system client is reserved for the worker's
+    // relay and scanners (src/jobs), and the raw PrismaClient for the db layer itself.
+    files: ['apps/api/src/**/*.ts'],
+    ignores: [
+      'apps/api/src/db/**',
+      'apps/api/src/jobs/**',
+      'apps/api/src/container.ts',
+      'apps/api/src/worker.ts',
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/db/system-client*'],
+              message: 'Cross-tenant access is reserved for src/jobs. Use TenantDb instead.',
+            },
+            {
+              group: ['**/generated/prisma/client*'],
+              importNames: ['PrismaClient'],
+              message: 'Do not create or accept a raw PrismaClient here; depend on TenantDb.',
+            },
+          ],
+        },
+      ],
     },
   },
 

@@ -21,5 +21,8 @@ export default defineConfig({
     // Plain process.env (not Prisma's env() helper, which throws when unset) so that
     // `prisma generate` works in CI and Docker builds where no database is configured.
     url: process.env.MIGRATE_DATABASE_URL,
+    // Scratch database Prisma replays migrations into, to detect drift between the migration
+    // history and schema.prisma (`migrate dev`, `migrate diff --from-migrations`).
+    shadowDatabaseUrl: process.env.SHADOW_DATABASE_URL,
   },
 });

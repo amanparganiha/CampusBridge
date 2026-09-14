@@ -11,6 +11,18 @@ export default defineConfig({
           environment: 'node',
         },
       },
+      {
+        // Real PostgreSQL via Testcontainers (requires Docker).
+        test: {
+          name: 'api-integration',
+          root: './apps/api',
+          include: ['test/integration/**/*.test.ts'],
+          environment: 'node',
+          globalSetup: ['./test/integration/setup/global-setup.ts'],
+          testTimeout: 30_000,
+          hookTimeout: 180_000,
+        },
+      },
     ],
     coverage: {
       provider: 'v8',

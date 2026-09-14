@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   quality:
-    name: Format, lint, typecheck, unit tests
+    name: Format, lint, typecheck, build, unit tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -31,3 +31,71 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm run test:unit -- --coverage
+
+  integration:
+    name: Integration tests (PostgreSQL via Testcontainers)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npm run test:integration
+
+  migrations:
+    name: Migrations from scratch, drift check, bootstrap and seed
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: campusbridge
+          POSTGRES_PASSWORD: campusbridge
+          POSTGRES_DB: campusbridge
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U campusbridge -d campusbridge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      MIGRATE_DATABASE_URL: postgresql://campusbridge:campusbridge@localhost:5432/campusbridge
+      SHADOW_DATABASE_URL: postgresql://campusbridge:campusbridge@localhost:5432/campusbridge_shadow
+      DATABASE_URL: postgresql://cb_app:ci-app-password@localhost:5432/campusbridge
+      SYSTEM_DATABASE_URL: postgresql://cb_system:ci-system-password@localhost:5432/campusbridge
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Create the shadow database used for drift detection
+        run: psql "$MIGRATE_DATABASE_URL" -c 'CREATE DATABASE campusbridge_shadow'
+
+      - name: Apply every migration to an empty database
+        run: npm run db:migrate -w @campusbridge/api
+
+      - name: Fail if schema.prisma and the migration history disagree
+        working-directory: apps/api
+        run: npx prisma migrate diff --from-migrations prisma/migrations --to-schema prisma/schema.prisma --exit-code
+
+      - name: Bootstrap login roles (twice, proving idempotency)
+        run: |
+          npm run db:bootstrap -w @campusbridge/api
+          npm run db:bootstrap -w @campusbridge/api
+
+      - name: Seed demo data (twice, proving idempotency)
+        run: |
+          npm run db:seed -w @campusbridge/api
+          npm run db:seed -w @campusbridge/api

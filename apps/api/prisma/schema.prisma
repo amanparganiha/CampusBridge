@@ -5,8 +5,16 @@
 //   stable keyset-pagination cursors).
 // - Tables and columns are snake_case in Postgres (@@map / @map); fields are camelCase in code.
 // - Timestamps are timestamptz with millisecond precision.
-// - Tenant-owned tables carry tenant_id, composite (tenant_id, id) foreign keys and row-level
-//   security policies. Privileges, RLS and CHECK constraints live in the migration SQL.
+//
+// Tenant isolation (see docs/multi-tenancy.md)
+// - Every tenant-owned table has tenant_id and a unique (tenant_id, id) key.
+// - Relations between tenant-owned tables use composite (tenant_id, x_id) foreign keys, so the
+//   database itself rejects a row that references another tenant's row.
+// - Every unique constraint on a tenant-owned table includes tenant_id, so uniqueness checks can
+//   never reveal whether a value exists in another tenant.
+// - Row-level security policies, privileges and CHECK constraints live in the migration SQL.
+// - "Actor" columns (createdById, gradedById, ...) are informational and carry no FK: users are
+//   suspended or anonymised rather than deleted, and audit_logs is the system of record.
 
 generator client {
   provider               = "prisma-client"
@@ -20,6 +28,8 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+// ─── Global tables ───────────────────────────────────────────────────────────────────────────
 
 enum TenantStatus {
   active
@@ -40,5 +50,452 @@ model Tenant {
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
 
+  users           User[]
+  userIdentities  UserIdentity[]
+  roles           Role[]
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+  sessions        Session[]
+  refreshTokens   RefreshToken[]
+  apiKeys         ApiKey[]
+  invitations     Invitation[]
+  courses         Course[]
+  sections        Section[]
+  enrollments     Enrollment[]
+  grades          Grade[]
+  auditLogs       AuditLog[]
+  outboxEvents    OutboxEvent[]
+  idempotencyKeys IdempotencyKey[]
+
   @@map("tenants")
+}
+
+/// Catalog of permissions, mirrored from src/authz/permissions.ts and managed by migrations.
+model Permission {
+  key         String @id
+  description String
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+// ─── Identity & access ───────────────────────────────────────────────────────────────────────
+
+enum UserStatus {
+  invited
+  active
+  suspended
+
+  @@map("user_status")
+}
+
+/// A person's account at one school. The same human at two schools has two accounts.
+model User {
+  id               String     @id @default(uuid(7)) @db.Uuid
+  tenantId         String     @map("tenant_id") @db.Uuid
+  /// Stored lower-cased (CHECK constraint); unique per tenant.
+  email            String
+  name             String
+  /// argon2id hash; null for SSO-only accounts.
+  passwordHash     String?    @map("password_hash")
+  status           UserStatus @default(active)
+  failedLoginCount Int        @default(0) @map("failed_login_count")
+  lockedUntil      DateTime?  @map("locked_until") @db.Timestamptz(3)
+  lastLoginAt      DateTime?  @map("last_login_at") @db.Timestamptz(3)
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant             Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  identities         UserIdentity[]
+  userRoles          UserRole[]
+  sessions           Session[]
+  ownedCourses       Course[]
+  instructedSections Section[]
+  enrollments        Enrollment[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, email])
+  @@map("users")
+}
+
+/// Link between a user and an external identity (OIDC issuer + subject) at the same school.
+model UserIdentity {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  issuer      String
+  subject     String
+  email       String?
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [tenantId, userId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, issuer, subject])
+  @@index([tenantId, userId])
+  @@map("user_identities")
+}
+
+model Role {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  tenantId    String   @map("tenant_id") @db.Uuid
+  /// Stable identifier used in code and tokens (admin, instructor, student, or custom).
+  key         String
+  name        String
+  description String?
+  /// System roles are created at provisioning and cannot be deleted.
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  rolePermissions RolePermission[]
+  userRoles       UserRole[]
+  invitations     Invitation[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, key])
+  @@map("roles")
+}
+
+model RolePermission {
+  tenantId      String @map("tenant_id") @db.Uuid
+  roleId        String @map("role_id") @db.Uuid
+  permissionKey String @map("permission_key")
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role       Role       @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionKey], references: [key], onDelete: Cascade)
+
+  @@id([tenantId, roleId, permissionKey])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  tenantId    String   @map("tenant_id") @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  roleId      String   @map("role_id") @db.Uuid
+  grantedById String?  @map("granted_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [tenantId, userId], references: [tenantId, id], onDelete: Cascade)
+  role   Role   @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Cascade)
+
+  @@id([tenantId, userId, roleId])
+  @@index([tenantId, roleId])
+  @@map("user_roles")
+}
+
+enum AuthMethod {
+  password
+  oidc
+  invitation
+
+  @@map("auth_method")
+}
+
+/// A login session; refresh tokens rotate within it. Revoking it ends every token at once.
+model Session {
+  id            String     @id @default(uuid(7)) @db.Uuid
+  tenantId      String     @map("tenant_id") @db.Uuid
+  userId        String     @map("user_id") @db.Uuid
+  authMethod    AuthMethod @map("auth_method")
+  ip            String?    @db.Inet
+  userAgent     String?    @map("user_agent")
+  createdAt     DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  lastSeenAt    DateTime   @default(now()) @map("last_seen_at") @db.Timestamptz(3)
+  expiresAt     DateTime   @map("expires_at") @db.Timestamptz(3)
+  revokedAt     DateTime?  @map("revoked_at") @db.Timestamptz(3)
+  revokedReason String?    @map("revoked_reason")
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [tenantId, userId], references: [tenantId, id], onDelete: Cascade)
+  refreshTokens RefreshToken[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId, userId])
+  @@map("sessions")
+}
+
+/// Opaque refresh token, stored only as a SHA-256 hash. Single use: each refresh rotates it.
+model RefreshToken {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  sessionId    String    @map("session_id") @db.Uuid
+  tokenHash    String    @map("token_hash")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
+  usedAt       DateTime? @map("used_at") @db.Timestamptz(3)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(3)
+  replacedById String?   @map("replaced_by_id") @db.Uuid
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  session Session @relation(fields: [tenantId, sessionId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, tokenHash])
+  @@index([tenantId, sessionId])
+  @@map("refresh_tokens")
+}
+
+/// Machine credential for partner systems, scoped to a subset of permissions.
+model ApiKey {
+  id          String    @id @default(uuid(7)) @db.Uuid
+  tenantId    String    @map("tenant_id") @db.Uuid
+  name        String
+  /// First characters of the key, shown in the UI so keys can be told apart.
+  prefix      String
+  keyHash     String    @map("key_hash")
+  scopes      String[]
+  createdById String?   @map("created_by_id") @db.Uuid
+  lastUsedAt  DateTime? @map("last_used_at") @db.Timestamptz(3)
+  expiresAt   DateTime? @map("expires_at") @db.Timestamptz(3)
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, keyHash])
+  @@map("api_keys")
+}
+
+model Invitation {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  email          String
+  roleId         String    @map("role_id") @db.Uuid
+  tokenHash      String    @map("token_hash")
+  invitedById    String?   @map("invited_by_id") @db.Uuid
+  expiresAt      DateTime  @map("expires_at") @db.Timestamptz(3)
+  acceptedAt     DateTime? @map("accepted_at") @db.Timestamptz(3)
+  acceptedUserId String?   @map("accepted_user_id") @db.Uuid
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, tokenHash])
+  @@index([tenantId, email])
+  @@map("invitations")
+}
+
+// ─── Teaching & learning ─────────────────────────────────────────────────────────────────────
+
+enum CourseStatus {
+  draft
+  published
+  archived
+
+  @@map("course_status")
+}
+
+model Course {
+  id             String       @id @default(uuid(7)) @db.Uuid
+  tenantId       String       @map("tenant_id") @db.Uuid
+  /// Catalog code, unique per school (e.g. "CS-101").
+  code           String
+  title          String
+  description    String       @default("")
+  status         CourseStatus @default(draft)
+  /// Price to enroll, in minor units. Null means free.
+  priceCents     Int?         @map("price_cents")
+  currency       String       @default("usd")
+  /// The instructor who owns the course (ABAC: only they and admins may manage it).
+  ownerId        String       @map("owner_id") @db.Uuid
+  /// Latest AI-generated summary, reviewed by a human before publishing.
+  summary        String?
+  /// Identity in an external campus system (Canvas/Moodle) for idempotent roster sync.
+  externalSource String?      @map("external_source")
+  externalId     String?      @map("external_id")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  owner    User      @relation(fields: [tenantId, ownerId], references: [tenantId, id], onDelete: Restrict)
+  sections Section[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, code])
+  @@unique([tenantId, externalSource, externalId])
+  @@index([tenantId, ownerId])
+  @@index([tenantId, status])
+  @@map("courses")
+}
+
+/// A scheduled offering of a course (term, instructor, capacity). Students enroll in sections.
+model Section {
+  id             String    @id @default(uuid(7)) @db.Uuid
+  tenantId       String    @map("tenant_id") @db.Uuid
+  courseId       String    @map("course_id") @db.Uuid
+  name           String
+  term           String?
+  instructorId   String?   @map("instructor_id") @db.Uuid
+  /// Null means unlimited.
+  capacity       Int?
+  /// Maintained atomically on enroll/drop; a CHECK keeps it within capacity.
+  enrolledCount  Int       @default(0) @map("enrolled_count")
+  startsAt       DateTime? @map("starts_at") @db.Timestamptz(3)
+  endsAt         DateTime? @map("ends_at") @db.Timestamptz(3)
+  externalSource String?   @map("external_source")
+  externalId     String?   @map("external_id")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  course      Course       @relation(fields: [tenantId, courseId], references: [tenantId, id], onDelete: Cascade)
+  instructor  User?        @relation(fields: [tenantId, instructorId], references: [tenantId, id], onDelete: Restrict)
+  enrollments Enrollment[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, externalSource, externalId])
+  @@index([tenantId, courseId])
+  @@index([tenantId, instructorId])
+  @@map("sections")
+}
+
+enum EnrollmentStatus {
+  pending_payment
+  active
+  dropped
+  completed
+
+  @@map("enrollment_status")
+}
+
+enum EnrollmentSource {
+  admin
+  self
+  payment
+  sync
+
+  @@map("enrollment_source")
+}
+
+model Enrollment {
+  id          String           @id @default(uuid(7)) @db.Uuid
+  tenantId    String           @map("tenant_id") @db.Uuid
+  sectionId   String           @map("section_id") @db.Uuid
+  studentId   String           @map("student_id") @db.Uuid
+  status      EnrollmentStatus @default(active)
+  source      EnrollmentSource
+  completedAt DateTime?        @map("completed_at") @db.Timestamptz(3)
+  droppedAt   DateTime?        @map("dropped_at") @db.Timestamptz(3)
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  section Section @relation(fields: [tenantId, sectionId], references: [tenantId, id], onDelete: Cascade)
+  student User    @relation(fields: [tenantId, studentId], references: [tenantId, id], onDelete: Cascade)
+  grades  Grade[]
+
+  @@unique([tenantId, id])
+  @@unique([tenantId, sectionId, studentId])
+  @@index([tenantId, studentId])
+  @@map("enrollments")
+}
+
+model Grade {
+  id           String   @id @default(uuid(7)) @db.Uuid
+  tenantId     String   @map("tenant_id") @db.Uuid
+  enrollmentId String   @map("enrollment_id") @db.Uuid
+  /// What was assessed, e.g. "Midterm exam".
+  title        String
+  score        Decimal  @db.Decimal(7, 2)
+  maxScore     Decimal  @map("max_score") @db.Decimal(7, 2)
+  feedback     String?
+  gradedById   String?  @map("graded_by_id") @db.Uuid
+  gradedAt     DateTime @default(now()) @map("graded_at") @db.Timestamptz(3)
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  enrollment Enrollment @relation(fields: [tenantId, enrollmentId], references: [tenantId, id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, enrollmentId])
+  @@map("grades")
+}
+
+// ─── Platform ────────────────────────────────────────────────────────────────────────────────
+
+enum ActorType {
+  user
+  api_key
+  system
+
+  @@map("actor_type")
+}
+
+/// Append-only record of security-relevant actions. The runtime roles cannot update or delete.
+model AuditLog {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  actorType    ActorType @map("actor_type")
+  actorId      String?   @map("actor_id") @db.Uuid
+  /// Dotted verb, e.g. "course.created", "auth.login.failed".
+  action       String
+  resourceType String    @map("resource_type")
+  resourceId   String?   @map("resource_id")
+  metadata     Json      @default("{}")
+  ip           String?   @db.Inet
+  userAgent    String?   @map("user_agent")
+  requestId    String?   @map("request_id")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@index([tenantId, resourceType, resourceId])
+  @@index([tenantId, actorId])
+  @@index([tenantId, action])
+  @@map("audit_logs")
+}
+
+/// Transactional outbox: domain events written in the same transaction as the change that
+/// caused them, then published asynchronously by the worker's relay.
+model OutboxEvent {
+  id            String    @id @default(uuid(7)) @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  /// Dotted event name, e.g. "enrollment.created".
+  type          String
+  aggregateType String    @map("aggregate_type")
+  aggregateId   String    @map("aggregate_id")
+  payload       Json
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  publishedAt   DateTime? @map("published_at") @db.Timestamptz(3)
+  attempts      Int       @default(0)
+  lastError     String?   @map("last_error")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, id])
+  @@map("outbox_events")
+}
+
+/// Stored responses for requests sent with an Idempotency-Key header, so retries replay the
+/// original result instead of repeating the side effect.
+model IdempotencyKey {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  tenantId     String    @map("tenant_id") @db.Uuid
+  principalId  String    @map("principal_id") @db.Uuid
+  key          String
+  method       String
+  path         String
+  requestHash  String    @map("request_hash")
+  statusCode   Int?      @map("status_code")
+  responseBody Json?     @map("response_body")
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, principalId, key])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
 }
