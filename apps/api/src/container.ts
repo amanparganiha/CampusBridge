@@ -15,9 +15,17 @@ import { Encryptor } from './lib/crypto/encryption.js';
 import { createLogger } from './lib/logger.js';
 import { createRedis } from './lib/redis.js';
 import { ApiKeyService } from './modules/api-keys/api-keys.service.js';
+import { AuditLogsService } from './modules/audit/audit-logs.service.js';
 import { AuditLogger } from './modules/audit/audit.service.js';
 import { AuthService } from './modules/auth/auth.service.js';
 import { OidcService } from './modules/auth/oidc/oidc.service.js';
+import { CoursesService } from './modules/courses/courses.service.js';
+import { EnrollmentsService } from './modules/enrollments/enrollments.service.js';
+import { GradesService } from './modules/grades/grades.service.js';
+import { Outbox } from './modules/outbox/outbox.service.js';
+import { TenantsService } from './modules/tenants/tenants.service.js';
+import { InvitationsService } from './modules/users/invitations.service.js';
+import { UsersService } from './modules/users/users.service.js';
 import { createMetrics } from './plugins/metrics.js';
 
 /**
@@ -87,6 +95,10 @@ export async function createContainer(
   });
   const oidcRedirectUri = new URL('/api/v1/auth/oidc/callback', env.PUBLIC_API_URL).href;
 
+  const outbox = new Outbox(db);
+  const tenants = new TenantsService({ db, directory, audit });
+  const enrollments = new EnrollmentsService({ db, audit, outbox, tenants });
+
   let shuttingDown = false;
 
   return {
@@ -117,6 +129,14 @@ export async function createContainer(
       revocation,
       quota: new TenantQuota(redis, logger, env.TENANT_RATE_LIMIT_PER_MINUTE),
       oidcRedirectUri,
+      db,
+      tenants,
+      users: new UsersService({ db, audit, outbox, auth, permissions }),
+      invitations: new InvitationsService({ db, audit, outbox, encryptor, auth, permissions }),
+      courses: new CoursesService({ db, audit, outbox, permissions }),
+      enrollments,
+      grades: new GradesService({ db, audit, outbox, enrollments }),
+      auditLogs: new AuditLogsService({ db, audit }),
     },
     readinessChecks: [
       {

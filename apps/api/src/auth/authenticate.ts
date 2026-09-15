@@ -19,6 +19,8 @@ declare module 'fastify' {
     auth?: 'public' | 'optional';
     /** RBAC: the caller must hold every listed permission. */
     permissions?: readonly Permission[];
+    /** RBAC: the caller must hold at least one of these (e.g. enroll yourself, or enroll others). */
+    anyPermission?: readonly Permission[];
   }
   interface FastifyRequest {
     principal: Principal | undefined;
@@ -97,12 +99,13 @@ const authenticationPluginImpl: FastifyPluginAsync<AuthenticationOptions> = asyn
   });
 
   app.addHook('onRequest', async (request) => {
-    const mode = request.routeOptions.config.auth;
+    const { auth: mode, permissions = [], anyPermission = [] } = request.routeOptions.config;
     if (mode === 'public') return;
 
     const header = request.headers.authorization;
     if (!header) {
-      if (mode === 'optional') return;
+      // An `optional` route may run anonymously, unless it is permission-gated.
+      if (mode === 'optional' && permissions.length === 0 && anyPermission.length === 0) return;
       throw new UnauthorizedError();
     }
 
@@ -123,23 +126,32 @@ const authenticationPluginImpl: FastifyPluginAsync<AuthenticationOptions> = asyn
         code: 'TENANT_MISMATCH',
       });
     }
-  });
 
-  app.addHook('preHandler', async (request) => {
-    const { principal } = request;
-    if (principal) await options.quota.consume(principal.tenantId);
-
-    const required = request.routeOptions.config.permissions ?? [];
-    if (required.length === 0) return;
-    if (!principal) throw new UnauthorizedError();
-    const missing = required.filter((permission) => !principal.permissions.has(permission));
-    if (missing.length > 0) {
-      throw new ForbiddenError(`This action requires: ${missing.join(', ')}.`, {
-        code: 'PERMISSION_DENIED',
-      });
-    }
+    await options.quota.consume(principal.tenantId);
+    // RBAC here, before the body is parsed and validated: a caller who may not use a route
+    // learns nothing about its input schema and never makes the server parse its body.
+    authorize(principal, permissions, anyPermission);
   });
 };
+
+/** RBAC: every permission in `required`, and at least one of `anyOf` when given. */
+function authorize(
+  principal: Principal,
+  required: readonly Permission[],
+  anyOf: readonly Permission[],
+): void {
+  const missing = required.filter((permission) => !principal.permissions.has(permission));
+  if (missing.length > 0) {
+    throw new ForbiddenError(`This action requires: ${missing.join(', ')}.`, {
+      code: 'PERMISSION_DENIED',
+    });
+  }
+  if (anyOf.length > 0 && !anyOf.some((permission) => principal.permissions.has(permission))) {
+    throw new ForbiddenError(`This action requires one of: ${anyOf.join(', ')}.`, {
+      code: 'PERMISSION_DENIED',
+    });
+  }
+}
 
 /** Applies to the scope it is registered in (the /api/v1 routes), not the whole app. */
 export const authenticationPlugin = fp(authenticationPluginImpl, { name: 'authentication' });

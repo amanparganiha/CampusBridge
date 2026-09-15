@@ -82,7 +82,14 @@ export function canViewGrades(principal: Principal, enrollment: EnrollmentFacts)
   return principal.permissions.has('grade:read') && canViewEnrollment(principal, enrollment);
 }
 
-/** Record grades or change an enrollment's status: whoever teaches it, or an administrator. */
+/** Enroll someone, or change an enrollment's status: whoever teaches it, or an administrator. */
+export function canManageEnrollment(principal: Principal, enrollment: EnrollmentFacts): boolean {
+  if (!principal.permissions.has('enrollment:manage')) return false;
+  if (isServiceAccount(principal) || principal.permissions.has('course:manage_all')) return true;
+  return teaches(principal, enrollment);
+}
+
+/** Record grades: whoever teaches the enrollment, or an administrator. */
 export function canGradeEnrollment(principal: Principal, enrollment: EnrollmentFacts): boolean {
   if (!principal.permissions.has('grade:write')) return false;
   if (isServiceAccount(principal) || principal.permissions.has('course:manage_all')) return true;

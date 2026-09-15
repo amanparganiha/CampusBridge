@@ -30,6 +30,12 @@ const swaggerPluginImpl: FastifyPluginAsync<SwaggerPluginOptions> = async (app, 
         { name: 'health', description: 'Liveness and readiness probes' },
         { name: 'auth', description: 'Sign-in, sessions, single sign-on and token keys' },
         { name: 'api-keys', description: 'Credentials for partner systems' },
+        { name: 'tenants', description: 'The school profile, branding and feature settings' },
+        { name: 'users', description: 'People, roles and invitations' },
+        { name: 'courses', description: 'Courses, sections and the course catalog' },
+        { name: 'enrollments', description: 'Enrollments and seat capacity' },
+        { name: 'grades', description: 'Gradebook entries' },
+        { name: 'audit', description: 'The append-only audit trail and its export' },
       ],
       components: {
         securitySchemes: {

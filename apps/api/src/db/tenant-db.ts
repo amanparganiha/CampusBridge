@@ -36,6 +36,13 @@ export interface TenantDb {
   transaction<T>(fn: (tx: DbClient) => Promise<T>, options?: TransactionOptions): Promise<T>;
 }
 
+/**
+ * Waiting up to 5s for a pooled connection (Prisma's default is 2s) keeps short bursts, such as
+ * many students enrolling at once, from failing; the 10s cap keeps a stuck transaction from
+ * holding a connection and row locks indefinitely.
+ */
+const DEFAULT_TRANSACTION_OPTIONS: TransactionOptions = { maxWait: 5_000, timeout: 10_000 };
+
 export function createTenantDb(base: PrismaClient): TenantDb {
   const scoped = extend(base);
 
@@ -65,7 +72,7 @@ export function createTenantDb(base: PrismaClient): TenantDb {
             const result = await fn(tx);
             return result;
           }),
-        options,
+        { ...DEFAULT_TRANSACTION_OPTIONS, ...options },
       );
     },
   };

@@ -92,11 +92,50 @@ global unique index, or with a single-column foreign key.
 - Password guessing is throttled per school and email, and responses never reveal whether an
   account exists.
 
+## The API
+
+All under `/api/v1`, documented at `/docs` (OpenAPI 3.1 generated from the Zod schemas).
+
+| Area        | Endpoints                                                                                                    |
+| ----------- | ------------------------------------------------------------------------------------------------------------ |
+| School      | `GET/PATCH /tenants/current` (name, branding, feature switches), public `GET /tenants/by-slug/:slug`         |
+| People      | `/users` (list, filter, suspend), `PUT /users/:id/roles`, `/roles`, `POST /users/invite`, `/invitations`     |
+| Invitations | public `POST /auth/invitations/lookup` and `/accept` (token in the body, never in a URL)                     |
+| Courses     | `/courses` (+ `publish`, `archive`, `sections`), `/sections/:id`, `/catalog` (published courses, open seats) |
+| Enrollments | `/enrollments` (self-enrollment or by staff; drop, complete, reinstate)                                      |
+| Grades      | `/enrollments/:id/grades` (with decimal-exact totals), `/grades/:id`                                         |
+| Audit       | `/audit-logs` (filters, `auth.*` prefixes), `/audit-logs/export` (CSV)                                       |
+
+What makes these more than CRUD:
+
+- **Capacity can't be oversold.** A seat is claimed with a single conditional increment
+  (`… WHERE enrolled_count < capacity`), so concurrent requests serialise on the section row. A
+  test fires 20 simultaneous enrollments at a 5-seat section and expects exactly 5 to succeed; a
+  database CHECK is the backstop.
+- **Idempotency keys.** Side-effecting POSTs (enrollments, invitations, grades) accept
+  `Idempotency-Key`. A retry replays the original response (`Idempotent-Replayed: true`), a
+  reused key with a different body is a 422, and a key still in flight is a 409 with Retry-After.
+  Keys are scoped to the caller, so two users can never collide.
+- **Every change is audited and published in one transaction.** Mutations write their audit row
+  and an outbox event in the same transaction as the change, so neither is lost or orphaned.
+  The audit export is itself audited, and it neutralises spreadsheet formula injection.
+- **No privilege escalation.** You can only grant, remove or invite roles whose permissions you
+  hold yourself, and a school always keeps at least one active administrator (enforced under a
+  per-school advisory lock, so two admins demoting each other can't both succeed).
+- **RBAC runs before validation.** A caller without permission gets 403 before the body is
+  parsed, so validation errors never reveal a route's schema to someone who may not use it.
+- **Proven isolation.** A table-driven suite aims every route that takes an id at another
+  school's records and expects 404. A meta-test fails if a new route isn't in that table. A
+  role × route matrix pins exactly which roles pass each route's permission check.
+
 ## Conventions at a glance
 
 - **Errors** are RFC 9457 `application/problem+json` with a stable machine-readable `code` and
   the `requestId` for log correlation. Unexpected errors never leak internal messages.
-- **Pagination** is cursor-based (`limit`, opaque `cursor`), returning `{ data, pageInfo }`.
+- **Pagination** is cursor-based (`limit`, opaque `cursor`, `sort=field` or `sort=-field`),
+  returning `{ data, pageInfo }`. Cursors are bound to their sort order.
+- **Not found vs forbidden.** Records you may not see answer 404, so their existence never
+  leaks. Records you can see but not change answer 403.
 - **Database access** uses least-privilege roles: migrations run as the schema owner, the API
   connects as `cb_app` (DML only, RLS enforced). Role passwords are set as SCRAM verifiers, so
   plaintext never reaches Postgres logs or `pg_stat_statements`.

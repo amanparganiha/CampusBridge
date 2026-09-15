@@ -17,6 +17,11 @@ const PUBLIC_OPERATIONS = new Set([
   'POST /api/v1/auth/refresh',
   'GET /api/v1/auth/oidc/{tenantSlug}/authorize',
   'GET /api/v1/auth/oidc/callback',
+  // A school's login page: name, branding and whether SSO is available. Nothing private.
+  'GET /api/v1/tenants/by-slug/{slug}',
+  // Invitation links: the unguessable token in the body is the credential.
+  'POST /api/v1/auth/invitations/lookup',
+  'POST /api/v1/auth/invitations/accept',
 ]);
 const OPTIONAL_AUTH_OPERATIONS = new Set(['POST /api/v1/auth/logout']);
 
