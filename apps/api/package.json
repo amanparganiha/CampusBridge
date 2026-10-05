@@ -44,7 +44,7 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@testcontainers/postgresql": "12.1.0",
+    "@testcontainers/postgresql": "12.2.0",
     "@testcontainers/redis": "12.1.0",
     "@types/pg": "8.23.1",
     "@types/supertest": "7.2.1",
