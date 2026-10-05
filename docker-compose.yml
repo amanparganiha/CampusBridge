@@ -95,7 +95,7 @@ services:
 
   keycloak:
     # Institutional SSO for local demos. Realms mirror the seeded tenants.
-    image: quay.io/keycloak/keycloak:26.7.3
+    image: quay.io/keycloak/keycloak:26.8.0
     command: ['start-dev', '--import-realm']
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: admin
