@@ -45,7 +45,7 @@
   },
   "devDependencies": {
     "@testcontainers/postgresql": "12.1.0",
-    "@testcontainers/redis": "12.1.0",
+    "@testcontainers/redis": "12.2.0",
     "@types/pg": "8.23.1",
     "@types/supertest": "7.2.1",
     "oauth2-mock-server": "9.2.0",
